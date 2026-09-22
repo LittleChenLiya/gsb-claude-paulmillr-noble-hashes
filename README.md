@@ -273,6 +273,35 @@ console.log(toHex(randomBytes(32)));
 - `bytesToHex` will convert `Uint8Array` to a hex string
 - `randomBytes(bytes)` will produce cryptographically secure random `Uint8Array` of length `bytes`
 
+#### merkle
+
+```typescript
+import { MerkleTree, verifyProof } from '@noble/hashes/merkle.js';
+
+const tree = new MerkleTree();
+tree.append(new TextEncoder().encode('leaf-0'));
+tree.append(new TextEncoder().encode('leaf-1'));
+const root = tree.root(); // Uint8Array, 32 bytes
+const proof = tree.proof(1); // { leafIndex, treeSize, siblings }
+verifyProof(root, new TextEncoder().encode('leaf-1'), proof); // true
+```
+
+Incremental append-only Merkle tree over SHA-256, browser-safe (no Node APIs):
+
+- Hashing rules: leaf is `H(0x00 || data)`, parent is `H(0x01 || left || right)`,
+  empty tree root is `H('')`. An odd last node on a level is promoted as-is, never duplicated
+- `append(leaf)` hashes the leaf synchronously, so mutating the caller's buffer
+  afterwards cannot change the tree. Throws beyond `Number.MAX_SAFE_INTEGER` leaves
+- Costs (n leaves): `append` is O(log n) hashes worst-case / O(1) amortized,
+  `root()` is O(log n) hashes from an incremental frontier (no full rebuild),
+  `proof(i)` is O(n) hashes, memory is O(n) leaf digests + O(log n) frontier
+- Proof format: `{ leafIndex, treeSize, siblings: Uint8Array[] }`, siblings ordered
+  bottom-up. Left/right placement and promoted (sibling-less) levels are derived by the
+  verifier from `leafIndex` + `treeSize`, so they are not stored
+- `verifyProof` returns `false` for malformed proofs: wrong sibling count (extra or
+  missing), non-32-byte siblings, out-of-range or non-integer index/size - not only
+  for root mismatch. Proof size is `32 * ceil(log2(n))` bytes plus index and size
+
 ### Specs
 
 - SHA2: [RFC 6234](https://datatracker.ietf.org/doc/html/rfc6234)

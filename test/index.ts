@@ -32,6 +32,7 @@ async function run() {
   // These modules register suites through top-level side effects. Their order must be stable when
   // jsbt replays this entrypoint in workers, so don't load them concurrently with Promise.all().
   await import('./eskdf.test.ts');
+  await import('./merkle.test.ts');
   await import('./noble-hashes-only.test.ts');
   await import('./u64.test.ts');
   await import('./utils.test.ts');

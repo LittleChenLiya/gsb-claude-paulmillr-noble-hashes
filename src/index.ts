@@ -27,6 +27,7 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { pbkdf2, pbkdf2Async } from '@noble/hashes/pbkdf2.js';
 import { scrypt, scryptAsync } from '@noble/hashes/scrypt.js';
 import { md5, ripemd160, sha1 } from '@noble/hashes/legacy.js';
+import { MerkleTree, verifyProof } from '@noble/hashes/merkle.js';
 import * as utils from '@noble/hashes/utils.js';
 ```
  */

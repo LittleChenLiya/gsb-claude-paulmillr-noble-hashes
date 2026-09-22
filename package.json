@@ -42,6 +42,7 @@
     "./hkdf.js": "./hkdf.js",
     "./hmac.js": "./hmac.js",
     "./legacy.js": "./legacy.js",
+    "./merkle.js": "./merkle.js",
     "./pbkdf2.js": "./pbkdf2.js",
     "./scrypt.js": "./scrypt.js",
     "./sha2.js": "./sha2.js",
