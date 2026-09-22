@@ -52,6 +52,7 @@ const hash = sha256(Uint8Array.from([0xca, 0xfe, 0x01, 0x23]));
 - [blake1, blake2, blake3](#blake1-blake2-blake3)
 - [legacy: sha1, md5, ripemd160](#legacy-sha1-md5-ripemd160)
 - MACs: [hmac](#hmac) | [kmac](#sha3-addons-cshake-kmac-kt128-turboshake) | [blake3 key mode](#blake1-blake2-blake3)
+- [merkle: append-only SHA-256 Merkle tree](#merkle-append-only-sha-256-merkle-tree)
 - KDFs: [hkdf](#hkdf) | [pbkdf2](#pbkdf2) | [scrypt](#scrypt) | [argon2](#argon2) | [eskdf](#eskdf)
 - [webcrypto: friendly wrapper](#webcrypto-friendly-wrapper)
 - [utils](#utils)
@@ -148,6 +149,27 @@ const key = new Uint8Array(32).fill(1);
 const msg = new Uint8Array(32).fill(2);
 const mac1 = hmac(sha256, key, msg);
 const mac2 = hmac.create(sha256, key).update(msg).digest();
+```
+
+#### merkle: append-only SHA-256 Merkle tree
+
+Incremental tree with RFC 6962-style domain separation (`H(0x00||leaf)`,
+`H(0x01||left||right)`, empty root `H('')`); odd levels promote the last node
+without copying it. The root is maintained by a binary frontier (no tree
+rebuild); leaf digests are kept for O(log n) inclusion proofs. See
+[merkle.md](merkle.md) for the proof format and complexity notes.
+
+```typescript
+import { MerkleTree, verifyMerkleProof } from '@noble/hashes/merkle.js';
+
+const tree = new MerkleTree();
+tree.append(new TextEncoder().encode('a')); // hashed immediately
+tree.append(new TextEncoder().encode('b'));
+tree.append(new TextEncoder().encode('c'));
+tree.root; // 32-byte Uint8Array, tree.size === 3
+
+const proof = tree.proof(0); // { size, index, path, siblings }
+verifyMerkleProof(tree.root, new TextEncoder().encode('a'), proof); // true
 ```
 
 #### hkdf

@@ -12,6 +12,7 @@
     "./hkdf.js": "./src/hkdf.ts",
     "./hmac.js": "./src/hmac.ts",
     "./legacy.js": "./src/legacy.ts",
+    "./merkle.js": "./src/merkle.ts",
     "./pbkdf2.js": "./src/pbkdf2.ts",
     "./scrypt.js": "./src/scrypt.ts",
     "./sha2.js": "./src/sha2.ts",
