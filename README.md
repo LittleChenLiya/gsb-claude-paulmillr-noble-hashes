@@ -150,6 +150,27 @@ const mac1 = hmac(sha256, key, msg);
 const mac2 = hmac.create(sha256, key).update(msg).digest();
 ```
 
+#### hmac_drbg
+
+HMAC_DRBG from NIST SP 800-90A Rev. 1 (10.1.2), fixed to SHA-256 / 256-bit
+security strength. Intended for reproducible protocol tests: all seed material
+is supplied explicitly and no system randomness is ever used.
+
+This is a mechanism only. It does not obtain a qualified entropy source for
+you, does not provide prediction resistance, and is not certified. There is no
+state serialization or cloning API.
+
+```typescript
+import { HMAC_DRBG } from '@noble/hashes/hmac_drbg.js';
+const entropy = new Uint8Array(32).fill(1); // must be >= 32 bytes, from a real entropy source
+const nonce = new Uint8Array(16).fill(2); // must be >= 16 bytes
+const drbg = HMAC_DRBG.instantiate(entropy, nonce, new Uint8Array(0));
+const bytes1 = drbg.generate(32); // up to 65536 bytes per request
+drbg.reseed(new Uint8Array(32).fill(3), new Uint8Array(0));
+const bytes2 = drbg.generate(32, new Uint8Array([9])); // optional additional input
+drbg.destroy(); // zeroizes state; all further operations throw
+```
+
 #### hkdf
 
 ```typescript

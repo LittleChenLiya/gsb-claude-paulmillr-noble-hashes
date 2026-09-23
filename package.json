@@ -41,6 +41,7 @@
     "./eskdf.js": "./eskdf.js",
     "./hkdf.js": "./hkdf.js",
     "./hmac.js": "./hmac.js",
+    "./hmac_drbg.js": "./hmac_drbg.js",
     "./legacy.js": "./legacy.js",
     "./pbkdf2.js": "./pbkdf2.js",
     "./scrypt.js": "./scrypt.js",

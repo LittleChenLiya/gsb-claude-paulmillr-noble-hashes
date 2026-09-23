@@ -23,6 +23,7 @@ import {
 import { blake3 } from '@noble/hashes/blake3.js';
 import { blake2b, blake2s } from '@noble/hashes/blake2.js';
 import { hmac } from '@noble/hashes/hmac.js';
+import { HMAC_DRBG } from '@noble/hashes/hmac_drbg.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { pbkdf2, pbkdf2Async } from '@noble/hashes/pbkdf2.js';
 import { scrypt, scryptAsync } from '@noble/hashes/scrypt.js';

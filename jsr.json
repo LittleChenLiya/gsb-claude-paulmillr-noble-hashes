@@ -11,6 +11,7 @@
     "./eskdf.js": "./src/eskdf.ts",
     "./hkdf.js": "./src/hkdf.ts",
     "./hmac.js": "./src/hmac.ts",
+    "./hmac_drbg.js": "./src/hmac_drbg.ts",
     "./legacy.js": "./src/legacy.ts",
     "./pbkdf2.js": "./src/pbkdf2.ts",
     "./scrypt.js": "./src/scrypt.ts",
