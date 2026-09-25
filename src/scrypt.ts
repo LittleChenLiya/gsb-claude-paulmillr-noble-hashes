@@ -8,6 +8,7 @@ import { sha256 } from './sha2.ts';
 import {
   anumber, asyncLoop,
   checkOpts, clean,
+  nextTick,
   rotl,
   swap32IfBE,
   u32,
@@ -109,6 +110,10 @@ const SCRYPT_DEFAULT_MAXMEM = 128 * 8 * (2 ** 20 + 1 + 1);
  * - `maxmem` - (default: `1024 ** 3 + 2 * 1024` aka 1GiB+2KiB). A limit that the app
  *   could use for scrypt
  * - `onProgress` - callback function that would be executed for progress report
+ * - `yieldEvery` - (async only) explicit work budget: max number of core BlockMix
+ *   work units per scheduling round before the async function yields
+ * - `onYield` - (async only) caller-provided yield hook, awaited at every budget boundary
+ * - `signal` - (async only) AbortSignal that cancels the derivation at a yield point
  */
 export type ScryptOpts = {
   /** CPU and memory work factor. Must be a power of two. */
@@ -130,6 +135,30 @@ export type ScryptOpts = {
    * buffers are wiped before the error propagates.
    */
   onProgress?: (progress: number) => void;
+  /**
+   * Async-only explicit work budget: the maximum number of core BlockMix work
+   * units executed per scheduling round before yielding. Must be an integer
+   * `>= 1`. The budget only changes how often the function yields; it never
+   * changes the scrypt mixing order, so every budget derives the same key.
+   * When any of `yieldEvery` / `onYield` / `signal` is set, the budgeted
+   * scheduler is used and `yieldEvery` defaults to `1024`.
+   */
+  yieldEvery?: number;
+  /**
+   * Async-only caller-provided yield hook, awaited once per budget boundary.
+   * Use it to integrate with a custom scheduler (e.g. `() => scheduler.yield()`).
+   * If omitted, the built-in event-loop tick is used. Throwing inside the hook
+   * is treated as a derivation failure: work buffers are wiped exactly once
+   * and the error is re-thrown.
+   */
+  onYield?: () => unknown | Promise<unknown>;
+  /**
+   * Async-only AbortSignal. When aborted, the derivation stops at the next
+   * budget boundary (or immediately when already aborted), the intermediate
+   * work buffers are wiped exactly once, no partial key is returned, and the
+   * promise rejects with `signal.reason`.
+   */
+  signal?: AbortSignal;
 };
 
 // Common prologue and epilogue for sync/async functions
@@ -142,7 +171,7 @@ function scryptInit(password: TArg<KDFInput>, salt: TArg<KDFInput>, _opts?: Scry
     },
     _opts
   );
-  const { N, r, p, dkLen, asyncTick, maxmem, onProgress } = opts;
+  const { N, r, p, dkLen, asyncTick, maxmem, onProgress, yieldEvery, onYield, signal } = opts;
   anumber(N, 'N');
   anumber(r, 'r');
   anumber(p, 'p');
@@ -151,6 +180,18 @@ function scryptInit(password: TArg<KDFInput>, salt: TArg<KDFInput>, _opts?: Scry
   anumber(maxmem, 'maxmem');
   if (onProgress !== undefined && typeof onProgress !== 'function')
     throw new Error('"onProgress" must be a function');
+  if (yieldEvery !== undefined) {
+    anumber(yieldEvery, 'yieldEvery');
+    if (yieldEvery < 1) throw new Error('"yieldEvery" expected integer >= 1');
+  }
+  if (onYield !== undefined && typeof onYield !== 'function')
+    throw new Error('"onYield" must be a function');
+  // Duck-typed instead of instanceof so cross-realm AbortSignals keep working.
+  if (signal !== undefined) {
+    const sig = signal as AbortSignal | null;
+    if (sig === null || typeof sig !== 'object' || typeof sig.aborted !== 'boolean')
+      throw new Error('"signal" must be an AbortSignal');
+  }
   // Without this, r=0 slips through: blockSize=0 turns the `p` upper bound into
   // Infinity and the failure surfaces later as a confusing pbkdf2 dkLen error.
   if (r < 1) throw new Error('"r" expected integer >= 1');
@@ -184,6 +225,15 @@ function scryptInit(password: TArg<KDFInput>, salt: TArg<KDFInput>, _opts?: Scry
   // Re-used between parallel iterations. Array(iterations) of B
   const V = u32(new Uint8Array(blockSize * N));
   const tmp = u32(new Uint8Array(blockSize));
+  // Failure cleanup is guarded so it runs exactly once per derivation, even
+  // when several failure sources (onProgress throw, onYield throw, abort)
+  // fire for the same derivation. Success cleanup lives in scryptOutput.
+  let cleanedUp = false;
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    clean(B, V, tmp);
+  };
   let blockMixCb = () => {};
   if (onProgress) {
     const totalBlockMix = 2 * N * p;
@@ -200,13 +250,29 @@ function scryptInit(password: TArg<KDFInput>, salt: TArg<KDFInput>, _opts?: Scry
         try {
           onProgress(blockMixCnt / totalBlockMix);
         } catch (e) {
-          clean(B, V, tmp);
+          cleanup();
           throw e;
         }
       }
     };
   }
-  return { N, r, p, dkLen, blockSize32, V, B32, B, tmp, blockMixCb, asyncTick };
+  return {
+    N,
+    r,
+    p,
+    dkLen,
+    blockSize32,
+    V,
+    B32,
+    B,
+    tmp,
+    blockMixCb,
+    asyncTick,
+    yieldEvery,
+    onYield,
+    signal,
+    cleanup,
+  };
 }
 
 function scryptOutput(
@@ -322,17 +388,102 @@ export function scrypt(
  *   },
  * });
  * ```
+ * @example
+ * Derive a key with an explicit work budget and cancellation.
+ * ```ts
+ * const ac = new AbortController();
+ * const key = await scryptAsync('password', 'salt', {
+ *   N: 2 ** 16,
+ *   r: 8,
+ *   p: 1,
+ *   dkLen: 32,
+ *   yieldEvery: 256, // run at most 256 BlockMix units per round
+ *   onYield: () => new Promise((resolve) => setTimeout(resolve, 0)),
+ *   signal: ac.signal, // ac.abort() stops derivation and wipes work buffers
+ * });
+ * ```
  */
 export async function scryptAsync(
   password: TArg<KDFInput>,
   salt: TArg<KDFInput>,
   opts: ScryptOpts
 ): Promise<TRet<Uint8Array>> {
-  const { N, r, p, dkLen, blockSize32, V, B32, B, tmp, blockMixCb, asyncTick } = scryptInit(
-    password,
-    salt,
-    opts
-  );
+  const {
+    N,
+    r,
+    p,
+    dkLen,
+    blockSize32,
+    V,
+    B32,
+    B,
+    tmp,
+    blockMixCb,
+    asyncTick,
+    yieldEvery,
+    onYield,
+    signal,
+    cleanup,
+  } = scryptInit(password, salt, opts);
+  if (yieldEvery !== undefined || onYield !== undefined || signal !== undefined) {
+    // Budgeted scheduling path: an explicit work budget bounds each synchronous
+    // round. Yields and cancellation happen only at budget boundaries, never
+    // inside BlockMix, so the core mixing order (and the derived key) is
+    // identical to the sync scrypt for every budget.
+    const budgetSize = yieldEvery === undefined ? 1024 : yieldEvery;
+    let budget = budgetSize;
+    const checkAborted = () => {
+      if (signal && signal.aborted) {
+        const reason = (signal as AbortSignal).reason;
+        throw reason !== undefined ? reason : new Error('scrypt: derivation aborted');
+      }
+    };
+    // Runs `iters` core work units, yielding to the caller's scheduler after
+    // every `budgetSize` units. The budget carries across loop boundaries, which
+    // makes yield points a deterministic function of total work.
+    const runUnits = async (iters: number, cb: () => void): Promise<void> => {
+      for (let i = 0; i < iters; i++) {
+        if (budget === 0) {
+          checkAborted();
+          if (onYield) await onYield();
+          else await nextTick();
+          budget = budgetSize;
+        }
+        cb();
+        budget--;
+      }
+    };
+    try {
+      checkAborted(); // Pre-aborted signal: no work happens, buffers are wiped below.
+      swap32IfBE(B32);
+      for (let pi = 0; pi < p; pi++) {
+        const Pi = blockSize32 * pi;
+        for (let i = 0; i < blockSize32; i++) V[i] = B32[Pi + i]; // V[0] = B[i]
+        let pos = 0;
+        await runUnits(N - 1, () => {
+          BlockMix(V, pos, V, (pos += blockSize32), r); // V[i] = BlockMix(V[i-1]);
+          blockMixCb();
+        });
+        await runUnits(1, () => {
+          BlockMix(V, (N - 1) * blockSize32, B32, Pi, r); // Process last element
+          blockMixCb();
+        });
+        await runUnits(N, () => {
+          // Same Integerify/Xor/BlockMix sequence as the default path below.
+          const j = (B32[Pi + blockSize32 - 16] & (N - 1)) >>> 0; // j = Integrify(X) % iterations
+          // tmp = B ^ V[j]
+          for (let k = 0; k < blockSize32; k++) tmp[k] = B32[Pi + k] ^ V[j * blockSize32 + k];
+          BlockMix(tmp, 0, B32, Pi, r); // B = BlockMix(B ^ V[j])
+          blockMixCb();
+        });
+      }
+      swap32IfBE(B32);
+    } catch (e) {
+      cleanup();
+      throw e;
+    }
+    return scryptOutput(password, dkLen, B, V, tmp);
+  }
   // One failure handler covers both yield boundaries without putting the hot loops in a try block.
   const abort = () => clean(B, V, tmp);
   swap32IfBE(B32);

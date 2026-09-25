@@ -196,6 +196,17 @@ const scr3 = await scryptAsync(Uint8Array.from([1, 2, 3]), Uint8Array.from([4, 5
   },
   // maxmem: 128 * 8 * (2 ** 17 + 1 + 1), // 128 * r * (N + p + 1)
 });
+// Explicit work-budget scheduling with cancellation (async only):
+const ac = new AbortController();
+const scr4 = await scryptAsync('password', 'salt', {
+  N: 2 ** 17,
+  r: 8,
+  p: 1,
+  dkLen: 32,
+  yieldEvery: 512, // run at most 512 BlockMix units, then yield
+  onYield: () => new Promise((resolve) => setTimeout(resolve, 0)),
+  signal: ac.signal, // ac.abort() stops derivation and wipes work buffers
+});
 ```
 
 - `N, r, p` are work factors. It is common to only adjust N, while keeping `r: 8, p: 1`.
@@ -204,6 +215,27 @@ const scr3 = await scryptAsync(Uint8Array.from([1, 2, 3]), Uint8Array.from([4, 5
 - `dkLen` is the length of output bytes e.g. `32` or `64`
 - `onProgress` can be used with async version of the function to report progress to a user.
 - `maxmem` prevents DoS and defaults to `1GiB + 2KiB` (`2**30 + 2**11`), enough for `N: 2**20, r: 8, p: 1`. It can be adjusted using formula: `128 * r * (N + p + 1)`
+- `yieldEvery` (async only) sets an explicit work budget: the maximum number of core
+  BlockMix work units per scheduling round before the function yields. It only changes how
+  often the function yields — never the mixing order — so every budget derives the same key.
+- `onYield` (async only) is a caller-provided hook awaited at every budget boundary,
+  for integration with custom schedulers. Throwing inside it fails the derivation.
+- `signal` (async only) accepts an `AbortSignal`. Aborting stops the derivation at
+  the next budget boundary, wipes the intermediate work buffers exactly once, and rejects
+  with `signal.reason` — no partial key is ever returned.
+
+Security boundary of the scheduling options:
+
+- Responsiveness is never bought by weakening the KDF: `N`, `r` and `p` are
+  applied exactly as requested, and `maxmem` validation is unchanged.
+- Cancellation is cooperative: it is observed at budget boundaries, so a huge
+  `yieldEvery` delays cancellation by up to one round of `yieldEvery` BlockMix units.
+- `onYield` runs while derivation is in progress; it must not re-enter scrypt with
+  the same output buffers and should not throw unless failure is intended.
+- `yieldEvery` / `onYield` / `signal` are validated by, but have no effect in,
+  the synchronous `scrypt`, which cannot yield.
+- A runnable demo of full derivation and cancellation states is available via
+  `node test/misc/scrypt-budget-demo.ts`; it prints no key material.
 
 On Apple M4, `N: 2**16` takes 0.1s and 64MB RAM; each increment of N doubles both,
 up to `N: 2**24` at 27s and 16GB. Mobile phones can be 1x-4x slower.
