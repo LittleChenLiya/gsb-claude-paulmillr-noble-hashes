@@ -452,6 +452,272 @@ export function test(variant: string, platform: any, { describe, it } = BT) {
         /"r" expected/
       );
     });
+
+    if (variant === 'noble')
+      describe('scrypt work-budget scheduling', () => {
+        // RFC 7914 §12 first vector: public fixed test data (empty password/salt),
+        // reused for cancellation tests so no real password is ever touched.
+        const VEC = SCRYPT_VECTORS[0];
+        const OPTS = { N: VEC.N, r: VEC.r, p: VEC.p, dkLen: VEC.dkLen };
+        const EXP = hexToBytes(VEC.exp.replace(/ /g, ''));
+        const TOTAL_UNITS = 2 * VEC.N * VEC.p; // 32 BlockMix units
+        // Work buffer shapes for the vector above: B is 128*r*p bytes,
+        // V is 32*r*N u32 words, tmp is 32*r u32 words.
+        const WIPE = { B: 128, V: 512, tmp: 32 };
+
+        // Counts clean() passes over scrypt work buffers by spying on fill(0).
+        const trackWipes = () => {
+          const fills = { u8: [], u32: [] };
+          const fill8 = Uint8Array.prototype.fill;
+          const fill32 = Uint32Array.prototype.fill;
+          Uint8Array.prototype.fill = function (value, ...rest) {
+            if (value === 0) fills.u8.push(this.length);
+            return fill8.call(this, value, ...rest);
+          };
+          Uint32Array.prototype.fill = function (value, ...rest) {
+            if (value === 0) fills.u32.push(this.length);
+            return fill32.call(this, value, ...rest);
+          };
+          return {
+            fills,
+            restore() {
+              Uint8Array.prototype.fill = fill8;
+              Uint32Array.prototype.fill = fill32;
+            },
+          };
+        };
+        const countLen = (list, len) => list.filter((l) => l === len).length;
+        // Each work buffer must be wiped exactly once: no leak, no double-wipe.
+        const expectWipedOnce = (fills) => {
+          eql(countLen(fills.u8, WIPE.B), 1, 'B wiped exactly once');
+          eql(countLen(fills.u32, WIPE.V), 1, 'V wiped exactly once');
+          eql(countLen(fills.u32, WIPE.tmp), 1, 'tmp wiped exactly once');
+        };
+
+        it('matches sync scrypt and RFC 7914 for every budget', async () => {
+          const syncKey = scrypt(VEC.P, VEC.S, OPTS);
+          eql(syncKey, EXP, 'sync vector');
+          for (const yieldEvery of [1, 2, 7, 8, 16, 32, 1024]) {
+            const key = await scryptAsync(VEC.P, VEC.S, { ...OPTS, yieldEvery });
+            eql(key, syncKey, 'yieldEvery=' + yieldEvery);
+          }
+          // onYield/signal without yieldEvery fall back to the default budget.
+          const viaDefault = await scryptAsync(VEC.P, VEC.S, { ...OPTS, onYield: () => {} });
+          eql(viaDefault, syncKey, 'default budget');
+        });
+
+        it('counting yield observes deterministic segmentation', async () => {
+          const seen = [];
+          await scryptAsync(VEC.P, VEC.S, {
+            ...OPTS,
+            yieldEvery: 8,
+            onYield: (info) => seen.push([info.done, info.total]),
+          });
+          // 32 units total, boundaries every 8, no yield after the final unit.
+          eql(seen, [
+            [8, TOTAL_UNITS],
+            [16, TOTAL_UNITS],
+            [24, TOTAL_UNITS],
+          ]);
+          const seen7 = [];
+          await scryptAsync(VEC.P, VEC.S, {
+            ...OPTS,
+            yieldEvery: 7,
+            onYield: (info) => seen7.push(info.done),
+          });
+          eql(seen7, [7, 14, 21, 28]);
+        });
+
+        it('budget changes yield frequency, not the mixing order', async () => {
+          const counts = [];
+          for (const yieldEvery of [1, 4, 8, 1024]) {
+            let yields = 0;
+            const key = await scryptAsync(VEC.P, VEC.S, {
+              ...OPTS,
+              yieldEvery,
+              onYield: () => yields++,
+            });
+            eql(key, EXP, 'key yieldEvery=' + yieldEvery);
+            counts.push(yields);
+          }
+          eql(counts, [TOTAL_UNITS - 1, 7, 3, 0]);
+        });
+
+        it('rejects invalid budgets and scheduling options', async () => {
+          for (const yieldEvery of [0, -1, 2.5, NaN, Infinity, '4', null, {}, []])
+            await rejects(
+              () => scryptAsync('pwd', 'salt', { ...OPTS, yieldEvery }),
+              'yieldEvery=' + yieldEvery
+            );
+          for (const onYield of [0, 'x', {}, null])
+            await rejects(
+              () => scryptAsync('pwd', 'salt', { ...OPTS, onYield }),
+              'onYield=' + onYield
+            );
+          for (const signal of [0, 'x', {}, { aborted: 1 }, null])
+            await rejects(
+              () => scryptAsync('pwd', 'salt', { ...OPTS, signal }),
+              'signal=' + signal
+            );
+          // The sync variant has no scheduler: it rejects scheduling options
+          // instead of silently ignoring them.
+          throws(() => scrypt('pwd', 'salt', { ...OPTS, yieldEvery: 4 }), /scryptAsync/);
+          throws(() => scrypt('pwd', 'salt', { ...OPTS, onYield: () => {} }), /scryptAsync/);
+          throws(
+            () => scrypt('pwd', 'salt', { ...OPTS, signal: new AbortController().signal }),
+            /scryptAsync/
+          );
+        });
+
+        it('keeps maxmem and parameter validation in budget mode', async () => {
+          const maxmem = 128 * OPTS.r * (OPTS.N + OPTS.p + 1);
+          await scryptAsync(VEC.P, VEC.S, { ...OPTS, yieldEvery: 4, maxmem });
+          await rejects(
+            () => scryptAsync(VEC.P, VEC.S, { ...OPTS, yieldEvery: 4, maxmem: maxmem - 1 }),
+            /maxmem/
+          );
+          await rejects(() => scryptAsync(VEC.P, VEC.S, { ...OPTS, yieldEvery: 4, N: 1 }), /"N"/);
+        });
+
+        it.serial('pre-aborted signal rejects before any work and wipes buffers', async () => {
+          const controller = new AbortController();
+          controller.abort();
+          const tracker = trackWipes();
+          let yields = 0;
+          try {
+            await rejects(
+              scryptAsync(VEC.P, VEC.S, {
+                ...OPTS,
+                yieldEvery: 4,
+                signal: controller.signal,
+                onYield: () => yields++,
+              }),
+              { name: 'AbortError' }
+            );
+          } finally {
+            tracker.restore();
+          }
+          eql(yields, 0, 'no yield before abort');
+          expectWipedOnce(tracker.fills);
+        });
+
+        it.serial('mid-derivation abort wipes buffers exactly once, checked twice', async () => {
+          const runOnce = async () => {
+            const controller = new AbortController();
+            const tracker = trackWipes();
+            let yields = 0;
+            let key, err;
+            try {
+              key = await scryptAsync(VEC.P, VEC.S, {
+                ...OPTS,
+                yieldEvery: 4,
+                signal: controller.signal,
+                onYield: () => {
+                  if (++yields === 2) controller.abort();
+                },
+              });
+            } catch (e) {
+              err = e;
+            } finally {
+              tracker.restore();
+            }
+            return { err, fills: tracker.fills, yields, key };
+          };
+          // Run the cancellation twice, re-verifying the cleanup each time.
+          for (let round = 0; round < 2; round++) {
+            const { err, fills, yields, key } = await runOnce();
+            eql(key, undefined, 'no partial key is returned');
+            eql(err && err.name, 'AbortError', 'abort rejection');
+            eql(yields, 2, 'aborted right after the second yield');
+            expectWipedOnce(fills);
+          }
+        });
+
+        it.serial(
+          'yield callback errors fail the derivation and clean up exactly once',
+          async () => {
+            const boom = new Error('yield-fail');
+            for (const asyncYield of [false, true]) {
+              const tracker = trackWipes();
+              let calls = 0;
+              try {
+                await rejects(
+                  scryptAsync(VEC.P, VEC.S, {
+                    ...OPTS,
+                    yieldEvery: 4,
+                    onYield: asyncYield
+                      ? async () => {
+                          calls++;
+                          throw boom;
+                        }
+                      : () => {
+                          calls++;
+                          throw boom;
+                        },
+                  }),
+                  (err) => err === boom
+                );
+              } finally {
+                tracker.restore();
+              }
+              eql(calls, 1, 'failing yield stops scheduling');
+              expectWipedOnce(tracker.fills);
+            }
+          }
+        );
+
+        it('concurrent budgeted derivations do not interfere', async () => {
+          const seen1 = [];
+          const seen2 = [];
+          const controller = new AbortController();
+          const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
+          const [k1, k2] = await Promise.all([
+            scryptAsync(VEC.P, VEC.S, {
+              ...OPTS,
+              yieldEvery: 4,
+              onYield: ({ done }) => {
+                seen1.push(done);
+                return pause();
+              },
+            }),
+            scryptAsync(VEC.P, VEC.S, {
+              ...OPTS,
+              yieldEvery: 8,
+              signal: controller.signal,
+              onYield: ({ done }) => {
+                seen2.push(done);
+                return pause();
+              },
+            }),
+          ]);
+          eql(k1, EXP, 'first key');
+          eql(k2, EXP, 'second key');
+          eql(seen1, [4, 8, 12, 16, 20, 24, 28], 'first segmentation');
+          eql(seen2, [8, 16, 24], 'second segmentation');
+        });
+
+        it('cancelling one of two concurrent derivations leaves the other intact', async () => {
+          const controller = new AbortController();
+          const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
+          const survivor = scryptAsync(VEC.P, VEC.S, {
+            ...OPTS,
+            yieldEvery: 2,
+            onYield: () => pause(),
+          });
+          const doomed = scryptAsync(VEC.P, VEC.S, {
+            ...OPTS,
+            yieldEvery: 2,
+            signal: controller.signal,
+            onYield: () => {
+              controller.abort();
+              return pause();
+            },
+          });
+          const [ok, cancelled] = await Promise.all([survivor, doomed.catch((e) => e)]);
+          eql(ok, EXP, 'surviving derivation key');
+          eql(cancelled.name, 'AbortError', 'cancelled derivation rejects');
+        });
+      });
   });
 
   describe(`KDF (${variant})`, () => {

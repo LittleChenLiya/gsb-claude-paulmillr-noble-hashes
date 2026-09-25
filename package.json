@@ -16,6 +16,7 @@
   },
   "scripts": {
     "benchmark": "node benchmark/hashes.ts",
+    "demo:scrypt": "node examples/scrypt-scheduling.ts",
     "benchmark:thirdparty": "cd benchmark/thirdparty; npm ci; JSBT_BENCHMARK_DIMENSIONS='algorithm,buffer,library' node hashes.ts",
     "benchmark:thirdparty-scrypt": "cd benchmark/thirdparty; npm ci; JSBT_BENCHMARK_DIMENSIONS='iters,library' FILTER='async' node scrypt.ts",
     "benchmark:size": "bismar -bsm",

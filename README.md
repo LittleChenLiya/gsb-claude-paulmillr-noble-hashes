@@ -204,6 +204,41 @@ const scr3 = await scryptAsync(Uint8Array.from([1, 2, 3]), Uint8Array.from([4, 5
 - `dkLen` is the length of output bytes e.g. `32` or `64`
 - `onProgress` can be used with async version of the function to report progress to a user.
 - `maxmem` prevents DoS and defaults to `1GiB + 2KiB` (`2**30 + 2**11`), enough for `N: 2**20, r: 8, p: 1`. It can be adjusted using formula: `128 * r * (N + p + 1)`
+- `yieldEvery`, `onYield`, `signal` (async only) opt into explicit work-budget
+  scheduling: at most `yieldEvery` core mixing units (BlockMix calls) run per round,
+  then the caller-provided `onYield` callback is awaited and `signal` is checked.
+
+```typescript
+const controller = new AbortController();
+const scr4 = await scryptAsync('password', 'salt', {
+  N: 2 ** 16,
+  r: 8,
+  p: 1,
+  dkLen: 32,
+  yieldEvery: 2048, // max BlockMix units per round before yielding
+  signal: controller.signal, // abort() cancels the derivation
+  onYield: ({ done, total }) => {
+    console.log('mixed', done, 'of', total, 'units');
+    return new Promise((resolve) => setTimeout(resolve, 0)); // caller-controlled yield
+  },
+});
+```
+
+Security boundaries of the scheduling interface:
+
+- The budget only changes *when* the JS wrapper yields; the scrypt core mixing
+  order is untouched and derived keys are bit-identical to sync `scrypt` for
+  every budget. `N`, `r`, `p` are never lowered to gain responsiveness.
+- `onYield` receives only `{ done, total }` work counters, never key material.
+  Throwing or rejecting from `onYield` fails the derivation.
+- Cancellation latency is bounded by one round: `signal` is checked before the
+  first mixing unit and at every scheduling boundary.
+- On abort or callback error the intermediate buffers (the large `V` table, `B`,
+  `tmp`) are wiped exactly once and the promise rejects without a partial key.
+- All parameter validation and the `maxmem` limit apply unchanged in budget mode.
+  The sync `scrypt` rejects these options instead of silently ignoring them.
+- See `examples/scrypt-scheduling.ts` for a runnable terminal demo
+  (`npm run demo:scrypt`).
 
 On Apple M4, `N: 2**16` takes 0.1s and 64MB RAM; each increment of N doubles both,
 up to `N: 2**24` at 27s and 16GB. Mobile phones can be 1x-4x slower.
