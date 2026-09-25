@@ -54,6 +54,7 @@ const hash = sha256(Uint8Array.from([0xca, 0xfe, 0x01, 0x23]));
 - MACs: [hmac](#hmac) | [kmac](#sha3-addons-cshake-kmac-kt128-turboshake) | [blake3 key mode](#blake1-blake2-blake3)
 - KDFs: [hkdf](#hkdf) | [pbkdf2](#pbkdf2) | [scrypt](#scrypt) | [argon2](#argon2) | [eskdf](#eskdf)
 - [webcrypto: friendly wrapper](#webcrypto-friendly-wrapper)
+- [multihash: hash once, get many digests](#multihash-hash-once-get-many-digests)
 - [utils](#utils)
 - [Security](#security) | [Speed](#speed) | [Contributing & testing](#contributing--testing) | [License](#license)
 
@@ -262,6 +263,32 @@ const pbkey1 = await pbkdf2(sha256, 'password', 'salt', { c: 524288, dkLen: 32 }
 
 A thin wrapper over built-in `crypto.subtle`, mirroring the noble-hashes API and validating
 inputs, in just 30+ lines of code. Webcrypto methods are always async.
+
+#### multihash: hash once, get many digests
+
+```typescript
+import { MultiHasher, createMultiHasher, hashStream } from '@noble/hashes/multihash.js';
+import { sha256, sha512 } from '@noble/hashes/sha2.js';
+
+const mh = new MultiHasher([
+  { name: 'sha256', create: () => sha256.create() },
+  { name: 'sha512', create: () => sha512.create() },
+]);
+mh.update(utf8ToBytes('a')).update(utf8ToBytes('bc'));
+const { sha256: d1, sha512: d2 } = mh.digest();
+
+// Clone before digesting to fork independent states:
+const fork = mh.clone();
+
+// Or hash an (async) byte stream; errors / aborts close the iterator
+// and destroy all inner state exactly once:
+const digests = await hashStream(byteStream, createMultiHasher(specs));
+```
+
+- Spec names keep insertion order and must be unique
+- `digest()` returns a frozen map of freshly allocated copies
+- `update()` after `digest()` is rejected; `destroy()` is idempotent
+- If a factory throws during construction, already-created hashes are destroyed
 
 #### utils
 
