@@ -53,6 +53,7 @@ const hash = sha256(Uint8Array.from([0xca, 0xfe, 0x01, 0x23]));
 - [legacy: sha1, md5, ripemd160](#legacy-sha1-md5-ripemd160)
 - MACs: [hmac](#hmac) | [kmac](#sha3-addons-cshake-kmac-kt128-turboshake) | [blake3 key mode](#blake1-blake2-blake3)
 - KDFs: [hkdf](#hkdf) | [pbkdf2](#pbkdf2) | [scrypt](#scrypt) | [argon2](#argon2) | [eskdf](#eskdf)
+- [multihash: parallel multi-algorithm hashing](#multihash-parallel-multi-algorithm-hashing)
 - [webcrypto: friendly wrapper](#webcrypto-friendly-wrapper)
 - [utils](#utils)
 - [Security](#security) | [Speed](#speed) | [Contributing & testing](#contributing--testing) | [License](#license)
@@ -262,6 +263,32 @@ const pbkey1 = await pbkdf2(sha256, 'password', 'salt', { c: 524288, dkLen: 32 }
 
 A thin wrapper over built-in `crypto.subtle`, mirroring the noble-hashes API and validating
 inputs, in just 30+ lines of code. Webcrypto methods are always async.
+
+#### multihash: parallel multi-algorithm hashing
+
+```typescript
+import { MultiHasher, updateFromAsyncIterable } from '@noble/hashes/multihash.js';
+import { sha256, sha512 } from '@noble/hashes/sha2.js';
+
+const multi = new MultiHasher([
+  ['sha256', () => sha256.create()],
+  ['sha512', () => sha512.create()],
+]);
+multi.update(new Uint8Array([97])).update(new Uint8Array([98, 99]));
+const digests = multi.digest(); // Map { 'sha256' => ..., 'sha512' => ... }
+multi.destroy();
+
+// Async byte sources, with cleanup on cancel / read error:
+const streamed = new MultiHasher([['sha256', () => sha256.create()]]);
+await updateFromAsyncIterable(streamed, asyncChunkSource, { signal: abortController.signal });
+```
+
+- `MultiHasher` feeds every `update()` chunk into all registered algorithms at once
+- Algorithm names keep insertion order and must be unique
+- `digest()` returns a name-keyed `Map` of independent digest copies
+- `clone()` creates fully independent state; `update()` after `digest()` is rejected
+- If an algorithm fails to initialize, already-created instances are destroyed
+- `updateFromAsyncIterable` closes the iterator and destroys all state on cancel or error
 
 #### utils
 
