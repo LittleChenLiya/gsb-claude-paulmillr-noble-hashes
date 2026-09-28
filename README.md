@@ -167,6 +167,53 @@ const prk = extract(sha256, inputKey, salt);
 const hk2 = expand(sha256, prk, info, 32);
 ```
 
+#### chunk-chain: integrity for a stream of data blocks
+
+`chunk-chain.js` verifies that a sequence of payload blocks is complete: no block
+missing, modified, or reordered. Every block on the wire is
+
+```text
+seq(8B BE u64) || len(4B BE u32) || payload(len B) || digest(32B)
+digest = SHA256(prevDigest || seq || len || payload)   // prevDigest is 32 zero bytes for block 0
+```
+
+The parser accepts arbitrary byte fragments, delivers a payload only after its
+full block verifies, fails permanently on the first error (never delivering later
+blocks), and at the end checks the caller-provided total block count and final
+digest. A per-block payload cap (default 1 MiB) is enforced at the 12-byte header,
+so a forged huge length fails before any large allocation. Sequence numbers are
+`bigint` and never pass through a JS `Number`, so indices above `2^53` are exact.
+
+Fixed vector (payloads `alpha`, `bravo`, `charlie`):
+
+```text
+0000000000000000 00000005 616c706861 bcbf656ecfc046c367511a054c256750c4892744d9f1010a833bb6175d20bbba
+0000000000000001 00000005 627261766f a337e8ffc433813bcfaa5072e886a7cf620661ad79bd791f78ce9e6041a2d629
+0000000000000002 00000007 636861726c6965 46c4184d12850b0cf76c8934f56c3950de536413a94a84627dd14fdb23fbe22b
+```
+
+```typescript
+import { ChunkChainEncoder, ChunkChainParser, encodeChunkChain } from '@noble/hashes/chunk-chain.js';
+
+const payloads = [
+  new TextEncoder().encode('alpha'),
+  new TextEncoder().encode('bravo'),
+  new TextEncoder().encode('charlie'),
+];
+const { bytes: stream, count, digest } = encodeChunkChain(payloads); // or ChunkChainEncoder.push
+
+// Bytes may arrive split into any fragments (here one byte at a time).
+const received: Uint8Array[] = [];
+const parser = new ChunkChainParser((payload, seq) => received.push(payload));
+for (const byte of stream) parser.update(Uint8Array.from([byte]));
+parser.finish({ count, digest }); // throws ChunkChainError on any mismatch
+```
+
+This is an integrity chain, **not** a defense against an attacker who can modify
+the stream: such an attacker can recompute all digests. Authenticate the final
+digest out-of-band (a signature or a real MAC) when that is a threat. Run the
+tests with `node test/chunk-chain.test.ts`.
+
 #### pbkdf2
 
 ```typescript

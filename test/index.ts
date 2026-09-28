@@ -35,6 +35,7 @@ async function run() {
   await import('./noble-hashes-only.test.ts');
   await import('./u64.test.ts');
   await import('./utils.test.ts');
+  await import('./chunk-chain.test.ts');
   init(variant, platform);
   acvpTests(false, variant, platform);
   argon2(variant, platform);
