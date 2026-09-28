@@ -53,6 +53,7 @@ const hash = sha256(Uint8Array.from([0xca, 0xfe, 0x01, 0x23]));
 - [legacy: sha1, md5, ripemd160](#legacy-sha1-md5-ripemd160)
 - MACs: [hmac](#hmac) | [kmac](#sha3-addons-cshake-kmac-kt128-turboshake) | [blake3 key mode](#blake1-blake2-blake3)
 - KDFs: [hkdf](#hkdf) | [pbkdf2](#pbkdf2) | [scrypt](#scrypt) | [argon2](#argon2) | [eskdf](#eskdf)
+- Integrity: [chain: chunk integrity chain](#chain-chunk-integrity-chain)
 - [webcrypto: friendly wrapper](#webcrypto-friendly-wrapper)
 - [utils](#utils)
 - [Security](#security) | [Speed](#speed) | [Contributing & testing](#contributing--testing) | [License](#license)
@@ -263,6 +264,46 @@ const pbkey1 = await pbkdf2(sha256, 'password', 'salt', { c: 524288, dkLen: 32 }
 A thin wrapper over built-in `crypto.subtle`, mirroring the noble-hashes API and validating
 inputs, in just 30+ lines of code. Webcrypto methods are always async.
 
+
+#### chain: chunk integrity chain
+
+Detects missing, modified or reordered data chunks over a stream of arbitrary byte
+fragments. Each block is `sequence (u64 BE) || length (u32 BE) || payload || digest`,
+where `digest = SHA-256(previousDigest || sequence || length || payload)` and the
+previous digest of the first block is 32 zero bytes.
+
+```ts
+import { ChainEncoder, ChainParser } from '@noble/hashes/chain.js';
+
+// Encode
+const enc = new ChainEncoder();
+enc.add(new TextEncoder().encode('alpha'));
+enc.add(new TextEncoder().encode('beta-block'));
+enc.add(Uint8Array.from([0, 1, 2, 255]));
+const { bytes, count, digest } = enc.finish();
+
+// Parse from arbitrary fragments (here: one byte at a time); blocks are delivered
+// synchronously only after the full block has been read and its digest verified.
+const received: Uint8Array[] = [];
+const parser = new ChainParser((payload) => received.push(payload), {
+  maxPayloadLength: 1024 * 1024, // per-block cap; oversized declared lengths are rejected
+});
+for (const byte of bytes) parser.update(Uint8Array.from([byte]));
+parser.end(count, digest); // verify total block count and final digest
+```
+
+- Sequence numbers are `bigint` (full uint64 range; no `Number` precision loss); the
+  encoder rejects uint64 overflow and payloads above `maxPayloadLength`.
+- The parser never pre-allocates on the declared length: it is checked against the
+  cap before any payload allocation, so a forged multi-GB length costs nothing.
+- Any error (bad sequence, bad digest, truncated input, wrong count/final digest)
+  puts the parser into a permanent failed state; later blocks are not delivered.
+- Fixed vectors (with the example payloads above) are in `test/chain.test.ts`; the
+  final digest of the three blocks is
+  `1d9d559af8070043597b06aaabadfd031877dcdb21ab431ba11f16f9787a237d`.
+- This is an integrity chain, **not a MAC**: an attacker who can change blocks can
+  also recompute every following digest. Use HMAC for authentication.
+ #### utils
 #### utils
 
 ```typescript

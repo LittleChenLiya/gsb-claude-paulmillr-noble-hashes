@@ -1,5 +1,9 @@
 # Changelog for noble-hashes
 
+## Unreleased
+
+- Add `chain.js`: streaming chunk integrity chain (`ChainEncoder` / `ChainParser`) with SHA-256 chained digests, bigint u64 sequence numbers, per-block payload length cap, and final block-count/digest verification. Integrity only; not a MAC.
+
 ## 2.4.0 (2026-08-27)
 
 ### Security and correctness
