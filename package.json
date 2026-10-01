@@ -43,6 +43,7 @@
     "./hmac.js": "./hmac.js",
     "./legacy.js": "./legacy.js",
     "./pbkdf2.js": "./pbkdf2.js",
+    "./scrypt-record.js": "./scrypt-record.js",
     "./scrypt.js": "./scrypt.js",
     "./sha2.js": "./sha2.js",
     "./sha3-addons.js": "./sha3-addons.js",

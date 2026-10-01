@@ -52,7 +52,7 @@ const hash = sha256(Uint8Array.from([0xca, 0xfe, 0x01, 0x23]));
 - [blake1, blake2, blake3](#blake1-blake2-blake3)
 - [legacy: sha1, md5, ripemd160](#legacy-sha1-md5-ripemd160)
 - MACs: [hmac](#hmac) | [kmac](#sha3-addons-cshake-kmac-kt128-turboshake) | [blake3 key mode](#blake1-blake2-blake3)
-- KDFs: [hkdf](#hkdf) | [pbkdf2](#pbkdf2) | [scrypt](#scrypt) | [argon2](#argon2) | [eskdf](#eskdf)
+- KDFs: [hkdf](#hkdf) | [pbkdf2](#pbkdf2) | [scrypt](#scrypt) | [scrypt-record](#scrypt-record) | [argon2](#argon2) | [eskdf](#eskdf)
 - [webcrypto: friendly wrapper](#webcrypto-friendly-wrapper)
 - [utils](#utils)
 - [Security](#security) | [Speed](#speed) | [Contributing & testing](#contributing--testing) | [License](#license)
@@ -213,6 +213,29 @@ up to `N: 2**24` at 27s and 16GB. Mobile phones can be 1x-4x slower.
 > not all JS engines support >= 2GB ArrayBuffer-s.
 > When using such N, you'll need to manually adjust `maxmem`, using formula above.
 > Other JS implementations don't support large N-s.
+
+#### scrypt-record
+
+Self-contained password records: cost parameters, salt and hash packed into
+one re-verifiable text string, in the form
+`$scrypt$ln=14,r=8,p=1$c2FsdA$aGFzaA` (ln is log2 of N; salt and hash are
+unpadded standard Base64).
+
+```typescript
+import {
+  createScryptRecord,
+  parseScryptRecord,
+  verifyScryptRecord,
+} from '@noble/hashes/scrypt-record.js';
+const record = createScryptRecord('password', { ln: 15, r: 8, p: 1 });
+verifyScryptRecord(record, 'password'); // true
+verifyScryptRecord(record, 'wrong'); // false
+parseScryptRecord(record); // { params: { ln: 15, r: 8, p: 1 }, salt, hash }
+```
+
+Parsing is strict: duplicated parameters, out-of-order fields, leading `+`
+or zeros, whitespace, padded or invalid Base64, unsafe integers and records
+exceeding the `maxmem` budget are rejected before any scrypt computation.
 
 #### argon2
 
