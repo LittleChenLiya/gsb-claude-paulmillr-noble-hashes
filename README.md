@@ -52,7 +52,7 @@ const hash = sha256(Uint8Array.from([0xca, 0xfe, 0x01, 0x23]));
 - [blake1, blake2, blake3](#blake1-blake2-blake3)
 - [legacy: sha1, md5, ripemd160](#legacy-sha1-md5-ripemd160)
 - MACs: [hmac](#hmac) | [kmac](#sha3-addons-cshake-kmac-kt128-turboshake) | [blake3 key mode](#blake1-blake2-blake3)
-- KDFs: [hkdf](#hkdf) | [pbkdf2](#pbkdf2) | [scrypt](#scrypt) | [argon2](#argon2) | [eskdf](#eskdf)
+- KDFs: [hkdf](#hkdf) | [hkdf-session](#hkdf-session) | [pbkdf2](#pbkdf2) | [scrypt](#scrypt) | [argon2](#argon2) | [eskdf](#eskdf)
 - [webcrypto: friendly wrapper](#webcrypto-friendly-wrapper)
 - [utils](#utils)
 - [Security](#security) | [Speed](#speed) | [Contributing & testing](#contributing--testing) | [License](#license)
@@ -166,6 +166,42 @@ import { extract, expand } from '@noble/hashes/hkdf.js';
 const prk = extract(sha256, inputKey, salt);
 const hk2 = expand(sha256, prk, info, 32);
 ```
+
+#### hkdf-session
+
+```typescript
+import { hkdfSession } from '@noble/hashes/hkdf-session.js';
+import { randomBytes } from '@noble/hashes/utils.js';
+const session = hkdfSession(randomBytes(32), randomBytes(32));
+const key = session.derive('my-app', new Uint8Array([1, 2, 3]), 32);
+session.destroy(); // wipes the internal PRK; further derive() calls throw
+```
+
+Explicit session deriver over HKDF-SHA256: the PRK is extracted once at creation
+from `salt || ikm`, then many independent keys are derived from `(label, context, length)`.
+
+**Info wire protocol** — `info` is a fixed, length-framed byte string (all lengths
+are validated before concatenation, so a malformed call can never produce an
+ambiguous framing):
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0 | 4 | ASCII `"HKT1"` (protocol/version magic) |
+| 4 | 2 | `uint16BE(labelUtf8ByteLength)` — label length in UTF-8 bytes, 0..65535 |
+| 6 | variable | `label` — UTF-8 encoded application label |
+| 6 + L | 2 | `uint16BE(contextLength)` — context byte length, 0..65535 |
+| 8 + L | variable | `context` — raw application context bytes |
+| 8 + L + C | 2 | `uint16BE(outputLength)` — output length in bytes, 0..255*32 |
+
+The length framing prevents label/context boundary ambiguity: `('ab', 'c')` and
+`('a', 'bc')` produce different `info` strings and different keys. Output is
+capped at `255*32 = 8160` bytes per the HKDF-SHA256 limit.
+
+**Lifecycle** — the PRK lives only inside the returned session object. `destroy()`
+zeroizes it in place (overwrites with zeros) and permanently rejects further
+`derive()` calls with a state error; it is idempotent. Inputs (`ikm`, `salt`,
+`context`) are never modified, and every derived key is a fresh, independent
+buffer. The standalone `extract` / `expand` primitives in `hkdf.ts` are unchanged.
 
 #### pbkdf2
 
