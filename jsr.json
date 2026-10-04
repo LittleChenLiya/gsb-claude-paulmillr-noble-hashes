@@ -10,6 +10,7 @@
     "./blake3.js": "./src/blake3.ts",
     "./eskdf.js": "./src/eskdf.ts",
     "./hkdf.js": "./src/hkdf.ts",
+    "./hkt1.js": "./src/hkt1.ts",
     "./hmac.js": "./src/hmac.ts",
     "./legacy.js": "./src/legacy.ts",
     "./pbkdf2.js": "./src/pbkdf2.ts",

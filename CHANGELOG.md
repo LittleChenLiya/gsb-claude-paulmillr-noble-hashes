@@ -1,5 +1,16 @@
 # Changelog for noble-hashes
 
+## Unreleased
+
+- Add `hkt1.js`: explicit stateful session-key deriver (`HKT1` class) on top of
+  HKDF-SHA256. Construction extracts the PRK once; `derive(label, context, length)`
+  expands keys with the fixed self-delimiting `info` frame
+  `"HKT1" || u16be(label_len) || utf8(label) || u16be(context_len) || context || u16be(output_len)`,
+  with all lengths (UTF-8 bytes for the label) validated before framing and output
+  capped at 255\*32 bytes. `destroy()` zeroizes the internal PRK and rejects further
+  derivations; caller buffers are untouched and results are independent copies.
+  Plain `hkdf` / `extract` / `expand` are unchanged.
+
 ## 2.4.0 (2026-08-27)
 
 ### Security and correctness

@@ -52,7 +52,7 @@ const hash = sha256(Uint8Array.from([0xca, 0xfe, 0x01, 0x23]));
 - [blake1, blake2, blake3](#blake1-blake2-blake3)
 - [legacy: sha1, md5, ripemd160](#legacy-sha1-md5-ripemd160)
 - MACs: [hmac](#hmac) | [kmac](#sha3-addons-cshake-kmac-kt128-turboshake) | [blake3 key mode](#blake1-blake2-blake3)
-- KDFs: [hkdf](#hkdf) | [pbkdf2](#pbkdf2) | [scrypt](#scrypt) | [argon2](#argon2) | [eskdf](#eskdf)
+- KDFs: [hkdf](#hkdf) | [hkt1](#hkt1) | [pbkdf2](#pbkdf2) | [scrypt](#scrypt) | [argon2](#argon2) | [eskdf](#eskdf)
 - [webcrypto: friendly wrapper](#webcrypto-friendly-wrapper)
 - [utils](#utils)
 - [Security](#security) | [Speed](#speed) | [Contributing & testing](#contributing--testing) | [License](#license)
@@ -165,6 +165,35 @@ const hk1 = hkdf(sha256, inputKey, salt, info, 32);
 import { extract, expand } from '@noble/hashes/hkdf.js';
 const prk = extract(sha256, inputKey, salt);
 const hk2 = expand(sha256, prk, info, 32);
+```
+
+#### hkt1
+
+Explicit, stateful session-key deriver on top of HKDF-SHA256. The constructor
+extracts the SHA-256 PRK once; every `derive()` expands a labeled key with a
+custom, ambiguity-free `info` frame:
+
+```text
+"HKT1" || u16be(label_byte_len) || utf8(label)
+      || u16be(context_len)     || context
+      || u16be(output_len)
+```
+
+Each variable-length field is prefixed by its big-endian 16-bit length, so
+`('ab', 'c')` and `('a', 'bc')` produce different `info`. Label length counts
+UTF-8 bytes. All lengths are validated before the frame is built; output length
+must be in `1..255*32` (8160) bytes. `destroy()` zeroizes the internal PRK and
+makes further `derive()` calls throw; caller buffers are never modified, and
+every returned key is an independent copy. The plain HKDF functions are
+unchanged.
+
+```typescript
+import { HKT1 } from '@noble/hashes/hkt1.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+const session = new HKT1(inputKey, salt); // PRK = HKDF-Extract(salt, inputKey)
+const encKey = session.derive('encryption', utf8ToBytes('client-hello'), 32);
+const macKey = session.derive('authentication', utf8ToBytes('client-hello'), 32);
+session.destroy(); // wipes PRK; session.derive(...) now throws a state error
 ```
 
 #### pbkdf2

@@ -40,6 +40,7 @@
     "./blake3.js": "./blake3.js",
     "./eskdf.js": "./eskdf.js",
     "./hkdf.js": "./hkdf.js",
+    "./hkt1.js": "./hkt1.js",
     "./hmac.js": "./hmac.js",
     "./legacy.js": "./legacy.js",
     "./pbkdf2.js": "./pbkdf2.js",
