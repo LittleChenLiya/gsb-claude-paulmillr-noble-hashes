@@ -33,6 +33,7 @@ async function run() {
   // jsbt replays this entrypoint in workers, so don't load them concurrently with Promise.all().
   await import('./eskdf.test.ts');
   await import('./noble-hashes-only.test.ts');
+  await import('./pool.test.ts');
   await import('./u64.test.ts');
   await import('./utils.test.ts');
   init(variant, platform);

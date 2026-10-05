@@ -13,6 +13,7 @@
     "./hmac.js": "./src/hmac.ts",
     "./legacy.js": "./src/legacy.ts",
     "./pbkdf2.js": "./src/pbkdf2.ts",
+    "./pool.js": "./src/pool.ts",
     "./scrypt.js": "./src/scrypt.ts",
     "./sha2.js": "./src/sha2.ts",
     "./sha3-addons.js": "./src/sha3-addons.ts",

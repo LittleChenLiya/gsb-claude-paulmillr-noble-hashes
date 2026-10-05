@@ -273,6 +273,29 @@ console.log(toHex(randomBytes(32)));
 - `bytesToHex` will convert `Uint8Array` to a hex string
 - `randomBytes(bytes)` will produce cryptographically secure random `Uint8Array` of length `bytes`
 
+#### pool: lease pool for hash instances
+
+`HashPool` lends cloneable hash instances out for exclusive use and resets them between callers, so no message residue leaks from one borrower to the next.
+
+```typescript
+import { sha256 } from '@noble/hashes/sha2.js';
+import { HashPool } from '@noble/hashes/pool.js';
+
+const pool = new HashPool(sha256.create, { capacity: 1 });
+const lease = await pool.acquire(); // reserve a permit, get a fresh empty hash
+lease.hash.update(new Uint8Array([97, 98, 99]));
+lease.hash.digest(); // ba7816bf...
+lease.release(); // old state destroyed once, a fresh empty instance is created
+pool.close(); // stop lending; queued waiters reject, in-flight returns retire the permit
+```
+
+Lifecycle:
+
+1. `acquire(signal?)` reserves a permit and returns a `Lease` with a fresh empty hash. At capacity it waits in a FIFO queue; pass an `AbortSignal` to cancel (cancellation rejects and consumes no permit).
+2. The holder uses the hash exclusively (`update` / `digest` / `clone`).
+3. `lease.release()` destroys the instance state exactly once and creates a fresh empty instance, handed to the next waiter or kept idle. Releasing the same lease twice throws.
+4. `close()` stops lending: waiters reject, idle instances are destroyed, and leases already checked out can still be released (state destroyed, permit retired, not re-lent).
+
 ### Specs
 
 - SHA2: [RFC 6234](https://datatracker.ietf.org/doc/html/rfc6234)
