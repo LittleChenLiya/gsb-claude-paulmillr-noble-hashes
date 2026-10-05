@@ -54,6 +54,7 @@ const hash = sha256(Uint8Array.from([0xca, 0xfe, 0x01, 0x23]));
 - MACs: [hmac](#hmac) | [kmac](#sha3-addons-cshake-kmac-kt128-turboshake) | [blake3 key mode](#blake1-blake2-blake3)
 - KDFs: [hkdf](#hkdf) | [pbkdf2](#pbkdf2) | [scrypt](#scrypt) | [argon2](#argon2) | [eskdf](#eskdf)
 - [webcrypto: friendly wrapper](#webcrypto-friendly-wrapper)
+- [hash-pool: rental pool for hash instances](#hash-pool-rental-pool-for-hash-instances)
 - [utils](#utils)
 - [Security](#security) | [Speed](#speed) | [Contributing & testing](#contributing--testing) | [License](#license)
 
@@ -263,6 +264,46 @@ const pbkey1 = await pbkdf2(sha256, 'password', 'salt', { c: 524288, dkLen: 32 }
 A thin wrapper over built-in `crypto.subtle`, mirroring the noble-hashes API and validating
 inputs, in just 30+ lines of code. Webcrypto methods are always async.
 
+#### hash-pool: rental pool for hash instances
+
+```js
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { HashPool } from '@noble/hashes/hash-pool.js';
+
+const pool = new HashPool(sha256.create, { capacity: 4 });
+
+const lease = await pool.acquire();
+try {
+  const digest = lease.hash.update(utf8ToBytes('abc')).digest();
+} finally {
+  lease.release(); // used state dies here; the slot reopens with a fresh empty instance
+}
+await pool.close();
+```
+
+`HashPool` rents cloneable hash instances (anything produced by a `.create()` factory) out for
+exclusive use:
+
+- **Capacity**: `new HashPool(sha256.create, { capacity: n })` bounds the number of simultaneously
+  leased instances; instances are created lazily, and `acquire()` waits (FIFO) once all slots are
+  out.
+- **Clean return / no message residue**: `lease.release()` calls `destroy()` on the used instance
+  exactly once and creates a brand-new empty instance for the next tenant. The previous tenant's
+  bytes can never appear in the next digest — after `'abc'` is returned, the next lease hashing
+  `''` gets the canonical empty-string digest.
+- **Cancellable waiting**: `await pool.acquire(abortSignal)`; aborting while queued rejects the
+  wait (with the abort reason) and consumes no permit, so whoever is next still gets a slot.
+- **Double return rejected**: calling `release()` twice, or returning an instance the pool never
+  lent, throws.
+- **Shutdown**: `pool.close()` destroys idle instances, wakes every waiting `acquire()` with a
+  `PoolClosedError`, and never lends again. Leases already in flight stay usable — `close()`
+  resolves once they are all returned, and those in-flight returns are destroyed without creating
+  replacements.
+
+The pool is a separate module entry; algorithm registrations (`sha2.js`, `sha3.js`, …) are
+unchanged.
+
 #### utils
 
 ```typescript
@@ -397,6 +438,8 @@ and memory-intensive KDF tests `npm run test:ultra`. The 9–17GiB scrypt cases 
 explicitly provisioned machine and run separately with `npm run test:ultra:scrypt`.
 
 `test/misc` directory contains unrolled implementations (sha3, argon2) and misc helper scripts.
+The hash pool has a focused, deterministic suite (`npm run test:pool`) and a zero-dependency
+local walkthrough (`node test/misc/pool-demo.js`).
 
 Some hashes are outside of scope of the library:
 - [Pedersen in micro-zk-proofs](https://github.com/paulmillr/micro-zk-proofs/blob/1ed5ce1253583b2e540eef7f3477fb52bf5344ff/src/pedersen.ts)

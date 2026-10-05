@@ -9,6 +9,7 @@
     "./blake2.js": "./src/blake2.ts",
     "./blake3.js": "./src/blake3.ts",
     "./eskdf.js": "./src/eskdf.ts",
+    "./hash-pool.js": "./src/hash-pool.ts",
     "./hkdf.js": "./src/hkdf.ts",
     "./hmac.js": "./src/hmac.ts",
     "./legacy.js": "./src/legacy.ts",
