@@ -47,6 +47,7 @@
     "./sha2.js": "./sha2.js",
     "./sha3-addons.js": "./sha3-addons.js",
     "./sha3.js": "./sha3.js",
+    "./structhash.js": "./structhash.js",
     "./webcrypto.js": "./webcrypto.js",
     "./utils.js": "./utils.js"
   },
